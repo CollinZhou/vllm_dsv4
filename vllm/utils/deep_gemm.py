@@ -86,10 +86,19 @@ class DeepGemmQuantScaleFMT(Enum):
 @functools.cache
 def is_deep_gemm_supported() -> bool:
     """Return `True` if DeepGEMM is supported on the current platform.
-    Currently, only Hopper and Blackwell GPUs are supported.
+
+    Currently, only Hopper and Blackwell (SM100) GPUs are supported.
+    SM120 (Blackwell B200 server edition) GPUs have no FP8 GEMM kernels
+    in DeepGEMM and must fall back to ``torch._scaled_mm``.
     """
-    is_supported_arch = current_platform.support_deep_gemm()
-    return envs.VLLM_USE_DEEP_GEMM and has_deep_gemm() and is_supported_arch
+    if not envs.VLLM_USE_DEEP_GEMM:
+        return False
+    if not has_deep_gemm():
+        return False
+    # SM120 has no FP8 GEMM kernels in DeepGEMM; skip it entirely.
+    if current_platform.is_device_capability_family(120):
+        return False
+    return current_platform.support_deep_gemm()
 
 
 @functools.cache
