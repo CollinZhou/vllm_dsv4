@@ -1,7 +1,7 @@
 #!/bin/bash
 # 停止 vllm DeepSeek-V4-Flash 服务脚本（INDEX=1）
 
-MODEL_SHORT="vllm_deepseekv4_flash"
+MODEL_SHORT="dsv4"
 PORT=8006
 
 INDEX="1"
