@@ -31,10 +31,11 @@ PID_FILE_NAME="PID_${INDEX}_${MODEL_SHORT}.pid"      # PID文件
 
 # ===== FlashInfer / SM120 优化 =====
 # FlashInfer SM120 decode kernel — requires flashinfer >= 0.6.13
-# Currently on 0.6.12: set to 0 to fallback to FlashMLA decode path
-export VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=0
-# FlashInfer allreduce fusion disabled — unstable with current flashinfer 0.6.12
-# Setting to 0 to use PYNCCL fallback (stable)
+# Upgraded to flashinfer 0.6.13 (main/nightly), enable SM120 decode
+export VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=1
+# Bypass flashinfer-cubin version check (0.6.12 cubin with 0.6.13 python)
+export FLASHINFER_DISABLE_VERSION_CHECK=1
+# FlashInfer allreduce fusion — unstable on PCIe, disable for now
 export VLLM_ALLREDUCE_USE_FLASHINFER=0
 # =================================
 
