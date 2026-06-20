@@ -24,26 +24,18 @@ LOG_POSTFIX="TP${TP_SIZE}PP${PP_SIZE}"             # 日志名尾缀
 LOG_FILE_NAME="LOG_${INDEX}_${MODEL_SHORT}_${LOG_POSTFIX}.log"  # 日志文件
 PID_FILE_NAME="PID_${INDEX}_${MODEL_SHORT}.pid"      # PID文件
 
-# ===== NCCL / PCIe 通信优化 =====
-# PCIe Gen5 x16, 4 GPUs, no NVLink — Ring algo + Simple proto for stable PCIe BW
-export NCCL_ALGO=Ring
-export NCCL_PROTO=Simple
-export NCCL_NTHREADS=256
-export NCCL_NSOCKS_PERTHREAD=4
-export NCCL_MIN_NCHANNELS=4
-export NCCL_MAX_NCHANNELS=8
-export NCCL_CHECKS_DISABLE=1
+# ===== NCCL / 通信优化 =====
+# NCCL 在 PCIe Gen5 上需要灵活使用不同 algo（Ring/tree/collnet）
+# 不要强制设置 NCCL_ALGO/NCCL_PROTO — NCCL auto-tune 通常最优
 # =================================
 
 # ===== FlashInfer / SM120 优化 =====
-# 启用 FlashInfer 官方的 SM120 packed sparse-MLA decode kernel
-export VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=1
-# 启用 FlashInfer allreduce backend（实验性）
-export VLLM_ALLREDUCE_USE_FLASHINFER=1
-# FlashInfer allreduce 选择 trtllm 后端
-export VLLM_FLASHINFER_ALLREDUCE_BACKEND=trtllm
-# FlashInfer workspace buffer（默认 394MB）
-export VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=1048576000
+# FlashInfer SM120 decode kernel — requires flashinfer >= 0.6.13
+# Currently on 0.6.12: set to 0 to fallback to FlashMLA decode path
+export VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=0
+# FlashInfer allreduce backend — requires specific workspace setup
+# Setting to 0 to use PYNCCL fallback (more stable for PCIe)
+export VLLM_ALLREDUCE_USE_FLASHINFER=0
 # =================================
 
 # CUDA / 基础环境变量
