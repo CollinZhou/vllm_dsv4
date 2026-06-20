@@ -33,8 +33,8 @@ PID_FILE_NAME="PID_${INDEX}_${MODEL_SHORT}.pid"      # PID文件
 # FlashInfer SM120 decode kernel — requires flashinfer >= 0.6.13
 # Currently on 0.6.12: set to 0 to fallback to FlashMLA decode path
 export VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=0
-# FlashInfer allreduce backend — requires specific workspace setup
-# Setting to 0 to use PYNCCL fallback (more stable for PCIe)
+# FlashInfer allreduce fusion disabled — unstable with current flashinfer 0.6.12
+# Setting to 0 to use PYNCCL fallback (stable)
 export VLLM_ALLREDUCE_USE_FLASHINFER=0
 # =================================
 
