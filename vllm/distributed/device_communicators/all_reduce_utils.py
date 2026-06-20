@@ -47,6 +47,12 @@ CUSTOM_ALL_REDUCE_MAX_SIZES = {
         6: 8 * MiB,  # 8 MB
         8: 4 * MiB,  # 4 MB
     },
+    "12.0": {
+        2: 1 * MiB,  # 1 MB (PCIe Gen5 x16, no NVLink)
+        4: 1 * MiB,  # 1 MB
+        6: 512 * KiB,  # 512 KB
+        8: 256 * KiB,  # 256 KB
+    },
 }
 
 SYMM_MEM_ALL_REDUCE_MAX_SIZES = {
@@ -67,6 +73,12 @@ SYMM_MEM_ALL_REDUCE_MAX_SIZES = {
         4: 32 * MiB,  # 32 MB
         6: 32 * MiB,  # 32 MB
         8: 64 * MiB,  # 64 MB
+    },
+    "12.0": {
+        2: 4 * MiB,  # 4 MB (PCIe Gen5 x16, no NVLink)
+        4: 8 * MiB,  # 8 MB
+        6: 16 * MiB,  # 16 MB
+        8: 32 * MiB,  # 32 MB
     },
 }
 

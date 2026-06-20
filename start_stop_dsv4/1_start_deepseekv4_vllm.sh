@@ -1,6 +1,8 @@
 #!/bin/bash
-# 启动 vllm DeepSeek-V4-Flash 服务脚本 (SM120/Blackwell)
-# 基于修改后的ds4-sm120-preview-dev分支
+# 启动 vllm DeepSeek-V4-Flash 服务脚本 (SM120/Blackwell) — 优化版 V2
+# 基于 ds4-sm120-preview-dev 分支
+# Changelog:
+#   V2: +FlashInfer SM120 decode, +NCCL PCIe tuning, +SM120 fusion tables, +gpu_mem 0.95
 
 # ==================== 配置区域 ====================
 INDEX="1"                           # 脚本序号
@@ -12,7 +14,7 @@ MODEL_NAME="DeepSeek-V4-Flash"            # API上展示的模型名
 GPUS="0,1,2,3"                         # 使用的GPU设备 (TP=4, 95GB * 4)
 TP_SIZE=4                              # 张量并行大小
 PP_SIZE=1                          # 流水线并行大小
-VRAM_RATE=0.91                       # 显存使用率（ref: 0.55→1.0x, 0.56→1.1x, 0.70→3.0x, 0.91→6.0x concurrency）
+VRAM_RATE=0.95                       # 显存使用率（ref: 0.91→6.0x, 0.95→~6.4x concurrency）
 CONTEXT_LENGTH=1048576               # 单序列最大长度
 MAX_NUM_SEQ=1024                      # 同时生成的序列数量
 KV_CACHE_DTYPE="fp8"               # KV cache dtype
@@ -22,9 +24,29 @@ LOG_POSTFIX="TP${TP_SIZE}PP${PP_SIZE}"             # 日志名尾缀
 LOG_FILE_NAME="LOG_${INDEX}_${MODEL_SHORT}_${LOG_POSTFIX}.log"  # 日志文件
 PID_FILE_NAME="PID_${INDEX}_${MODEL_SHORT}.pid"      # PID文件
 
-# =================================================
+# ===== NCCL / PCIe 通信优化 =====
+# PCIe Gen5 x16, 4 GPUs, no NVLink — Ring algo + Simple proto for stable PCIe BW
+export NCCL_ALGO=Ring
+export NCCL_PROTO=Simple
+export NCCL_NTHREADS=256
+export NCCL_NSOCKS_PERTHREAD=4
+export NCCL_MIN_NCHANNELS=4
+export NCCL_MAX_NCHANNELS=8
+export NCCL_CHECKS_DISABLE=1
+# =================================
 
-# 设置环境变量
+# ===== FlashInfer / SM120 优化 =====
+# 启用 FlashInfer 官方的 SM120 packed sparse-MLA decode kernel
+export VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=1
+# 启用 FlashInfer allreduce backend（实验性）
+export VLLM_ALLREDUCE_USE_FLASHINFER=1
+# FlashInfer allreduce 选择 trtllm 后端
+export VLLM_FLASHINFER_ALLREDUCE_BACKEND=trtllm
+# FlashInfer workspace buffer（默认 394MB）
+export VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE=1048576000
+# =================================
+
+# CUDA / 基础环境变量
 export CUDA_HOME="/opt/cuda-13.0.3"
 export PATH="/opt/cuda-13.0.3/bin:$PATH"
 export TRITON_PTXAS_PATH="/opt/cuda-13.0.3/bin/ptxas"
@@ -32,7 +54,7 @@ export CUDA_VISIBLE_DEVICES="${GPUS}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "============================================"
-echo "启动 vllm DeepSeek-V4-Flash 服务 (SM120)"
+echo "启动 vllm DeepSeek-V4-Flash 服务 (SM120) — 优化版 V2"
 echo "模型路径: ${MODEL_PATH}"
 echo "模型名称: ${MODEL_NAME}"
 echo "GPU设备:  ${CUDA_VISIBLE_DEVICES}"
@@ -42,6 +64,11 @@ echo "服务端口: ${PORT}"
 echo "显存利用率: ${VRAM_RATE}"
 echo "上下文长度: ${CONTEXT_LENGTH}"
 echo "KV Cache: ${KV_CACHE_DTYPE}"
+echo "Block Size: ${BLOCK_SIZE}"
+echo "CUDAGraph: ${CUDAGRAPH_MODE}"
+echo "NCCL Algo: ${NCCL_ALGO}"
+echo "FlashInfer SM120 Decode: ${VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE}"
+echo "FlashInfer Allreduce: ${VLLM_ALLREDUCE_USE_FLASHINFER}"
 echo "============================================"
 
 # 检查端口是否被占用
