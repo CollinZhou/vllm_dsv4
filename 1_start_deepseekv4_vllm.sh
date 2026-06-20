@@ -1,0 +1,79 @@
+#!/bin/bash
+# 启动 vllm DeepSeek-V4-Flash 服务脚本 (SM120/Blackwell)
+# 基于修改后的ds4-sm120-preview-dev分支
+
+# ==================== 配置区域 ====================
+INDEX="1"                           # 脚本序号
+MODEL_SHORT="vllm_deepseekv4_flash"       # 日志文件中的模型名
+PORT=8006                          # 实验模型端口（8006-8009）
+
+MODEL_PATH="/models/models/deepseek-ai/DeepSeek-V4-Flash/"    # 模型绝对路径
+MODEL_NAME="DeepSeek-V4-Flash"            # API上展示的模型名
+GPUS="0,1,2,3"                         # 使用的GPU设备 (TP=4, 95GB * 4)
+TP_SIZE=4                              # 张量并行大小
+PP_SIZE=1                          # 流水线并行大小
+VRAM_RATE=0.95                     # 显存使用率
+CONTEXT_LENGTH=1048576               # 单序列最大长度
+MAX_NUM_SEQ=1024                      # 同时生成的序列数量
+KV_CACHE_DTYPE="fp8"               # KV cache dtype
+BLOCK_SIZE=256                     # Attention block size
+CUDAGRAPH_MODE="FULL_AND_PIECEWISE" # CUDAGraph mode
+LOG_POSTFIX="TP${TP_SIZE}PP${PP_SIZE}"             # 日志名尾缀
+LOG_FILE_NAME="LOG_${INDEX}_${MODEL_SHORT}_${LOG_POSTFIX}.log"  # 日志文件
+PID_FILE_NAME="PID_${INDEX}_${MODEL_SHORT}.pid"      # PID文件
+
+# =================================================
+
+# 设置环境变量
+export CUDA_HOME="/opt/cuda-13.0.3"
+export PATH="/opt/cuda-13.0.3/bin:$PATH"
+export TRITON_PTXAS_PATH="/opt/cuda-13.0.3/bin/ptxas"
+export CUDA_VISIBLE_DEVICES="${GPUS}"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+echo "============================================"
+echo "启动 vllm DeepSeek-V4-Flash 服务 (SM120)"
+echo "模型路径: ${MODEL_PATH}"
+echo "模型名称: ${MODEL_NAME}"
+echo "GPU设备:  ${CUDA_VISIBLE_DEVICES}"
+echo "张量并行: ${TP_SIZE}"
+echo "流水线并行: ${PP_SIZE}"
+echo "服务端口: ${PORT}"
+echo "显存利用率: ${VRAM_RATE}"
+echo "上下文长度: ${CONTEXT_LENGTH}"
+echo "KV Cache: ${KV_CACHE_DTYPE}"
+echo "============================================"
+
+# 检查端口是否被占用
+if lsof -Pi :${PORT} -sTCP:LISTEN -t >/dev/null ; then
+    echo "ERROR: 端口 ${PORT} 已被占用!"
+    exit 1
+fi
+
+# 启动服务
+nohup setsid .venv/bin/vllm serve "${MODEL_PATH}" \
+    --served-model-name "${MODEL_NAME}" \
+    --trust-remote-code \
+    --kv-cache-dtype ${KV_CACHE_DTYPE} \
+    --block-size ${BLOCK_SIZE} \
+    --tensor-parallel-size ${TP_SIZE} \
+    --pipeline-parallel-size ${PP_SIZE} \
+    --gpu-memory-utilization "${VRAM_RATE}" \
+    --max-model-len "${CONTEXT_LENGTH}" \
+    --max-num-seqs "${MAX_NUM_SEQ}" \
+    --tokenizer-mode deepseek_v4 \
+    --tool-call-parser deepseek_v4 \
+    --enable-auto-tool-choice \
+    --reasoning-parser deepseek_v4 \
+    --compilation-config "{\"cudagraph_mode\":\"${CUDAGRAPH_MODE}\", \"custom_ops\":[\"all\"]}" \
+    --async-scheduling \
+    --enable-prefix-caching \
+    --load-format auto \
+    --enable-expert-parallel \
+    --host 0.0.0.0 \
+    --port ${PORT} \
+    > "${LOG_FILE_NAME}" 2>&1 &
+
+echo $! > "$PID_FILE_NAME"
+echo "DeepSeek-V4-Flash 已启动, PID: $(cat ${PID_FILE_NAME})"
+echo "日志: ${LOG_FILE_NAME}"
