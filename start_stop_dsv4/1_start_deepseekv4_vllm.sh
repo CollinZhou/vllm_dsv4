@@ -12,7 +12,7 @@ MODEL_NAME="DeepSeek-V4-Flash"            # API上展示的模型名
 GPUS="0,1,2,3"                         # 使用的GPU设备 (TP=4, 95GB * 4)
 TP_SIZE=4                              # 张量并行大小
 PP_SIZE=1                          # 流水线并行大小
-VRAM_RATE=0.9045                     # 显存使用率
+VRAM_RATE=0.91                       # 显存使用率（ref: 0.55→1.0x, 0.56→1.1x, 0.70→3.0x, 0.91→6.0x concurrency）
 CONTEXT_LENGTH=1048576               # 单序列最大长度
 MAX_NUM_SEQ=1024                      # 同时生成的序列数量
 KV_CACHE_DTYPE="fp8"               # KV cache dtype
