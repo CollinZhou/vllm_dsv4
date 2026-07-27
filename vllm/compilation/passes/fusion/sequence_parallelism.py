@@ -32,7 +32,8 @@ logger = init_logger(__name__)
 SP_MIN_HIDDEN_SIZE: dict[int, int] = {
     90: 8192,  # H100: only for models with hidden_size >= 8192
     100: 8192,  # Blackwell family (SM100): only for models with hidden_size >= 8192
-    120: 8192,  # SM120 Blackwell RTX PRO 6000: only for models with hidden_size >= 8192
+    120: 4096,  # SM120 Blackwell RTX PRO 6000: allow for models with hidden_size >= 4096
+                # (DeepSeek V4 has hidden_size=4096; the MoE experts are much larger)
 }
 
 # Min size per GPU per device capability for sequence parallelism

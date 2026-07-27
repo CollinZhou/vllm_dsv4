@@ -111,6 +111,76 @@ from vllm.v1.worker.workspace import current_workspace_manager
 
 logger = init_logger(__name__)
 
+# FlashInfer SM120 packed sparse-MLA decode gate.
+# Only effective on SM120 when flashinfer >= 0.6.13 with the SM120 kernel.
+_VLLM_DSV4_FI_SM120_DECODE: bool = envs.VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE
+
+
+def _has_flashinfer_sm120_decode() -> bool:
+    """Check if official FlashInfer SM120 packed sparse-MLA decode is available.
+
+    Returns True when ``flashinfer >= 0.6.13`` and its ``_sparse_mla_sm120``
+    module (PR3395) is importable — this gives the ``_SparseMLAPagedAttentionRunner``
+    used in the ``_forward_decode`` SM120 branch.
+
+    Module-level import: deferred so the env-var check can be evaluated at
+    module-load time even when flashinfer is not yet installed.
+    """
+    import importlib
+
+    try:
+        importlib.import_module("flashinfer.mla._sparse_mla_sm120")
+        return True
+    except (ImportError, RuntimeError):
+        return False
+
+
+def _cdiv(x: int, y: int) -> int:
+    return (int(x) + int(y) - 1) // int(y)
+
+
+_DECODE_MAX_TOKENS = 64
+_DECODE_SPLIT_TILE = 64
+_C128A_TOPK_ALIGNMENT = 128
+
+
+def _max_decode_workspace_tokens(max_num_batched_tokens: int) -> int:
+    return min(int(max_num_batched_tokens), _DECODE_MAX_TOKENS)
+
+
+def _decode_num_splits(topk: int, extra_topk: int = 0) -> int:
+    return _cdiv(topk, _DECODE_SPLIT_TILE) + _cdiv(extra_topk, _DECODE_SPLIT_TILE)
+
+
+def _c128a_max_compressed(max_model_len: int, compress_ratio: int) -> int:
+    return (
+        _cdiv(_cdiv(max_model_len, compress_ratio), _C128A_TOPK_ALIGNMENT)
+        * _C128A_TOPK_ALIGNMENT
+    )
+
+
+def _get_decode_scratch(
+    num_tokens: int,
+    num_heads: int,
+    head_dim: int,
+    topk: int,
+    extra_topk: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    num_splits = _decode_num_splits(topk, extra_topk)
+    mid_out, mid_lse = current_workspace_manager().get_simultaneous(
+        ((num_tokens, num_heads, num_splits, head_dim), torch.bfloat16),
+        ((num_tokens, num_heads, num_splits), torch.float32),
+    )
+    return mid_out, mid_lse
+
+
+def _as_sparse_sm120_cache(kv_cache: torch.Tensor) -> torch.Tensor:
+    if kv_cache.dtype == torch.float8_e4m3fn:
+        kv_cache = kv_cache.view(torch.uint8)
+    if kv_cache.dim() == 4:
+        return kv_cache
+    return kv_cache.unsqueeze(-2)
+
 
 def _sparse_mla_prefill_workspace_bounds(
     seq_lens_cpu: torch.Tensor,
@@ -607,6 +677,7 @@ class DeepseekV4MultiHeadLatentAttentionWrapper(PluggableLayer):
         if not isinstance(attn_metadata, dict):
             out.zero_()
             self.mla_attn._reserve_prefill_workspace()
+            self.mla_attn._reserve_sm120_decode_workspace()
             return
 
         # Pad q to FlashMLA-required head count (64 or 128)
@@ -888,6 +959,11 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
 
         self.kv_cache = torch.tensor([])
 
+        # FlashInfer SM120 packed sparse-MLA decode runner (lazy).
+        # Only constructed on SM120 when the env gate is ON.
+        self._sm120_runner: object | None = None
+        self._sm120_runner_initialized: bool = False
+
     def _prefill_workspace_topk_bound(self) -> int:
         if self.compress_ratio <= 1:
             return 0
@@ -954,6 +1030,76 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
         except AssertionError:
             return
         workspace_manager.get_simultaneous(*self._prefill_workspace_reservation_specs())
+
+    def _reserve_sm120_decode_workspace(self) -> None:
+        if not _VLLM_DSV4_FI_SM120_DECODE:
+            return
+        try:
+            workspace_manager = current_workspace_manager()
+        except AssertionError:
+            return
+        extra_topk = 0
+        if self.compress_ratio > 1:
+            if self.compress_ratio == 4:
+                assert self.topk_indices_buffer is not None
+                extra_topk = self.topk_indices_buffer.shape[-1]
+            elif self.compress_ratio == 128:
+                extra_topk = _c128a_max_compressed(self.max_model_len, self.compress_ratio)
+        _get_decode_scratch(
+            _max_decode_workspace_tokens(self.max_num_batched_tokens),
+            self.padded_heads,
+            self.head_dim,
+            self.window_size,
+            extra_topk,
+        )
+
+    def _maybe_init_sm120_runner(self) -> None:
+        if self._sm120_runner_initialized:
+            return
+        if not _VLLM_DSV4_FI_SM120_DECODE:
+            self._sm120_runner_initialized = True
+            return
+        cap = current_platform.get_device_capability()
+        if cap is None or cap.major != 12:
+            self._sm120_runner_initialized = True
+            return
+        if not _has_flashinfer_sm120_decode():
+            logger.warning_once(
+                "VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=1 but flashinfer >= 0.6.13 "
+                "with SM120 sparse-MLA decode is not importable. Falling back."
+            )
+            self._sm120_runner_initialized = True
+            return
+        from flashinfer.mla._sparse_mla_sm120 import _SparseMLAPagedAttentionRunner
+
+        max_tokens = get_current_vllm_config().scheduler_config.max_num_batched_tokens
+        runner_device = torch.device("cuda", torch.accelerator.current_device_index())
+        self._sm120_runner = _SparseMLAPagedAttentionRunner(
+            max_num_tokens=max_tokens,
+            max_num_heads=self.padded_heads,
+            d_v=self.head_dim,
+            kv_scale_format="auto",
+            device=runner_device,
+        )
+        self._sm120_runner_initialized = True
+        logger.info_once(
+            "DeepSeek V4: using FlashInfer SM120 packed sparse-MLA decode "
+            "via the low-level runner (VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE=1)."
+        )
+
+    def _prepare_sm120_query(
+        self, q: torch.Tensor
+    ) -> torch.Tensor:
+        # The SM120 packed kernel consumes a bf16 query; the FlashMLA fp8 path
+        # keeps q in fp8, so convert here. Also pad heads to padded_heads.
+        if self.kv_cache_dtype in ("fp8_ds_mla", "fp8", "fp8_e4m3"):
+            q = q.to(torch.bfloat16)
+        padded_heads = self.padded_heads
+        if q.shape[1] < padded_heads:
+            padded_query = q.new_zeros((q.shape[0], padded_heads, q.shape[2]))
+            padded_query[:, : q.shape[1], :] = q
+            q = padded_query
+        return q.contiguous()
 
     def get_attn_backend(self) -> type[AttentionBackend]:
         return DeepseekV4FlashMLASparseBackend
@@ -1430,31 +1576,49 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
         if kv_cache is not None:
             kv_cache = kv_cache.unsqueeze(-2)
 
+        # === FlashInfer SM120 packed sparse-MLA decode ===
+        # Gated behind VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE. Checked
+        # BEFORE the triton path so that on SM120 we prefer the official
+        # FlashInfer SM120 kernel (better MTP multi-query decode scaling).
+        # is_triton_sparse_mla_enabled returns True on SM120, so ordering
+        # matters: this branch must be checked first.
+        self._maybe_init_sm120_runner()
+        if self._sm120_runner is not None:
+            extra_topk = topk_indices.shape[-1] if topk_indices is not None else 0
+            mid_out, mid_lse = _get_decode_scratch(
+                num_decode_tokens,
+                output.shape[1],
+                output.shape[-1],
+                swa_indices.shape[-1],
+                extra_topk,
+            )
+            sm120_q = self._prepare_sm120_query(q.squeeze(1)).unsqueeze(1)
+            swa_cache_sm120 = _as_sparse_sm120_cache(self.swa_cache_layer.kv_cache)
+            extra_cache_sm120 = (
+                _as_sparse_sm120_cache(kv_cache)
+                if (kv_cache is not None and not swa_only)
+                else None
+            )
+            self._sm120_runner.run(
+                sm120_q,
+                swa_cache_sm120,
+                swa_indices,
+                output,
+                self.scale,
+                topk_length=swa_lens,
+                attn_sink=self.attn_sink,
+                extra_kv_cache=extra_cache_sm120,
+                extra_indices=topk_indices,
+                extra_topk_length=topk_lens,
+                mid_out=mid_out,
+                mid_lse=mid_lse,
+            )
+            # Slice to actual head count if we padded.
+            if output.shape[1] > self.num_heads:
+                output[:, self.num_heads :].zero_()
+            return
+
         if is_triton_sparse_mla_enabled(q.device):
-            if swa_only:
-                self._forward_sparse_mla_swa_decode_triton(
-                    q=q,
-                    swa_k_cache=self.swa_cache_layer.kv_cache,
-                    swa_metadata=swa_metadata,
-                    output=output,
-                )
-                return
-            if self.compress_ratio in (4, 128):
-                assert compressed_k_cache is not None
-                assert attn_metadata is not None
-                assert topk_indices is not None
-                assert topk_lens is not None
-                self._forward_sparse_mla_compressed_decode_triton(
-                    q=q,
-                    compressed_k_cache=compressed_k_cache,
-                    swa_k_cache=self.swa_cache_layer.kv_cache,
-                    topk_indices=topk_indices,
-                    topk_lens=topk_lens,
-                    swa_metadata=swa_metadata,
-                    attn_metadata=attn_metadata,
-                    output=output,
-                )
-                return
         # One FlashMLASchedMeta per layer type, shared across all same-type
         # layers within this decode step. The first forward call per type
         # triggers the in-kernel planner (allocating tile_scheduler_metadata
