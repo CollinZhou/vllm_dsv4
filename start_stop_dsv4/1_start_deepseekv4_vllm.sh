@@ -3,7 +3,8 @@
 # 基于 ds4-sm120-preview-dev 分支
 # Changelog:
 #   V2: +FlashInfer SM120 decode, +NCCL PCIe tuning, +SM120 fusion tables, +gpu_mem 0.95
-
+# 512k上下文，0.5 VRAM_Rate，TP4PP1下：1.35x并发，首字延时1.4s, 推理速度86t/s!
+#
 # ==================== 配置区域 ====================
 INDEX="1"                           # 脚本序号
 MODEL_SHORT="dsv4"       # 日志文件中的模型名
@@ -14,9 +15,15 @@ MODEL_NAME="DeepSeek-V4-Flash"            # API上展示的模型名
 GPUS="0,1,2,3"                         # 使用的GPU设备 (TP=4, 95GB * 4)
 TP_SIZE=4                              # 张量并行大小
 PP_SIZE=1                          # 流水线并行大小
-VRAM_RATE=0.95                       # 显存使用率（ref: 0.91→6.0x, 0.95→~6.4x concurrency）
-CONTEXT_LENGTH=1048576               # 单序列最大长度
-MAX_NUM_SEQ=1024                      # 同时生成的序列数量
+VRAM_RATE=0.95                    # 显存使用率
+#   cards   VRAM_RATE   Context_Length  Concurrency
+#   4       0.91        1M              6.0x
+#   4       0.95        1M              6.4x
+#   4       0.5         512k            1.35x
+#   4       0.6         512k            3.29x            
+#   4       0.95        512k            10.13x
+CONTEXT_LENGTH=524288               # 单序列最大长度(max. 1048576)
+MAX_NUM_SEQ=512                      # 同时生成的序列数量
 KV_CACHE_DTYPE="fp8"               # KV cache dtype
 BLOCK_SIZE=256                     # Attention block size
 CUDAGRAPH_MODE="FULL_AND_PIECEWISE" # CUDAGraph mode

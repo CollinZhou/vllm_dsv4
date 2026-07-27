@@ -252,3 +252,13 @@ vllm/grpc/vllm_engine_pb2.pyi
 
 # Ignore generated cpu headers 
 csrc/cpu/cpu_attn_dispatch_generated.h
+
+# Ignore log and pid file in start_stop_dsv4 foler
+start_stop_dsv4/*.LOG
+start_stop_dsv4/*.PID
+start_stop_dsv4/*.pid
+start_stop_dsv4/*.log
+
+# Ignore DeepGEMM folder and flashinfer folder
+DeepGEMM/
+flashinfer/
