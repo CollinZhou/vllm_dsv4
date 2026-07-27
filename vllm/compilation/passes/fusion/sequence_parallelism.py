@@ -31,7 +31,8 @@ logger = init_logger(__name__)
 # Only apply sequence parallelism for models with hidden_size >= threshold
 SP_MIN_HIDDEN_SIZE: dict[int, int] = {
     90: 8192,  # H100: only for models with hidden_size >= 8192
-    100: 8192,  # Blackwell family: only for models with hidden_size >= 8192
+    100: 8192,  # Blackwell family (SM100): only for models with hidden_size >= 8192
+    120: 8192,  # SM120 Blackwell RTX PRO 6000: only for models with hidden_size >= 8192
 }
 
 # Min size per GPU per device capability for sequence parallelism
@@ -41,6 +42,7 @@ SP_MIN_PER_GPU_SIZE_MB: dict[int, float] = {
     90: 8,  # 8MB per GPU for H100
     # Use a more conservative threshold on Blackwell so TP8 starts later.
     100: 32,
+    120: 32,  # SM120: same conservative threshold as SM100 (PCIe Gen5, no NVLink)
 }
 
 
