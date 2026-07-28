@@ -255,6 +255,7 @@ if TYPE_CHECKING:
     VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD: int = 1024
     VLLM_COMPILE_CACHE_SAVE_FORMAT: Literal["binary", "unpacked"] = "binary"
     VLLM_USE_V2_MODEL_RUNNER: bool = False
+    VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE: bool = False
     VLLM_DEEPSEEK_V4_USE_MEGA_MOE: bool = False
     VLLM_LOG_MODEL_INSPECTION: bool = False
     VLLM_DEBUG_MFU_METRICS: bool = False
@@ -1749,6 +1750,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Optional override for the DeepGEMM MegaMoE fused expert kernel in
     # DeepSeek V4. If unset, kernel_config.moe_backend decides; set to 1/0 to
     # force-enable or force-disable this path during bring-up.
+    "VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE": lambda: bool(
+        int(os.getenv("VLLM_DEEPSEEK_V4_FLASHINFER_SM120_DECODE", "0"))
+    ),
     "VLLM_DEEPSEEK_V4_USE_MEGA_MOE": lambda: bool(
         int(os.getenv("VLLM_DEEPSEEK_V4_USE_MEGA_MOE", "0"))
     ),
